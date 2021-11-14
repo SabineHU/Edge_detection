@@ -48,7 +48,14 @@ public class EdgeDetection : MonoBehaviour
             int tileX = (src.width + 7) / 8;
             int tileY = (src.height + 7) / 8;
             int kernelID = (int)detectionMode;
-            edgeDetection.SetTexture(kernelID, "_CameraColorBuffer", src);
+
+            int blurID = 4;
+            RenderTexture blurBuffer = RenderTexture.GetTemporary(rtD);
+            edgeDetection.SetTexture(blurID, "_CameraColorBuffer", src);
+            edgeDetection.SetTexture(blurID, "_BlurBufferRW", blurBuffer);
+            edgeDetection.Dispatch(blurID, tileX, tileY, 1);
+
+            edgeDetection.SetTexture(kernelID, "_CameraColorBuffer", blurBuffer);
             edgeDetection.SetTexture(kernelID, "_EdgesBufferRW", edgeBuffer);
             edgeDetection.Dispatch(kernelID, tileX, tileY, 1);
 

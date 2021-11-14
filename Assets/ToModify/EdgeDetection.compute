@@ -3,6 +3,8 @@
 #pragma kernel EdgeDetectionNormal
 #pragma kernel EdgeDetectionCustom
 
+#pragma kernel GaussianBlur
+
 // Required for decompression
 #include "UnityCG.cginc"
 
@@ -12,6 +14,7 @@ Texture2D<float4> _CameraDepthNormalsTexture;
 
 // Output buffer
 RWTexture2D<float4> _EdgesBufferRW;
+RWTexture2D<float4> _BlurBufferRW;
 
 #define M_PI 3.14159
 
@@ -34,34 +37,40 @@ static float sobelYMatrix[9] = {
 };
 
 struct SobelFilterImage {
-    float3 g;
+    float4 g;
     float3 theta;
 };
 
-SobelFilterImage ComputeSobelFilter(uint2 id) {
+SobelFilterImage ComputeSobelFilter(Texture2D<float4> buffer, uint2 id) {
     SobelFilterImage sobelImage;
-    sobelImage.g = float3(0.0, 0.0, 0.0);
+    sobelImage.g = float4(0.0, 0.0, 0.0, 0.0);
 
-    float3 gx = float3(0.0, 0.0, 0.0);
-    float3 gy = float3(0.0, 0.0, 0.0);
+    float4 gx = float4(0.0, 0.0, 0.0, 0.0);
+    float4 gy = float4(0.0, 0.0, 0.0, 0.0);
 
     for (int i = 0; i < 9; ++i) {
-        float3 color = _CameraColorBuffer.Load(int3(id.xy + sobelPointsPositions[i], 0)).r;
-        gx.r += sobelXMatrix[i] * color;
-        gy.r += sobelYMatrix[i] * color;
+        float4 color = buffer.Load(int3(id.xy + sobelPointsPositions[i], 0));
+        gx.r += sobelXMatrix[i] * color.r;
+        gy.r += sobelYMatrix[i] * color.r;
 
-        color = _CameraColorBuffer.Load(int3(id.xy + sobelPointsPositions[i], 0)).g;
-        gx.g += sobelXMatrix[i] * color;
-        gy.g += sobelYMatrix[i] * color;
+        gx.g += sobelXMatrix[i] * color.g;
+        gy.g += sobelYMatrix[i] * color.g;
 
-        color = _CameraColorBuffer.Load(int3(id.xy + sobelPointsPositions[i], 0)).b;
-        gx.b += sobelXMatrix[i] * color;
-        gy.b += sobelYMatrix[i] * color;
+        gx.b += sobelXMatrix[i] * color.b;
+        gy.b += sobelYMatrix[i] * color.b;
+
+        gx.a += sobelXMatrix[i] * color.a;
+        gy.a += sobelYMatrix[i] * color.a;
     }
 
     sobelImage.g.r = sqrt(gx.r * gx.r + gy.r * gy.r);
     sobelImage.g.g = sqrt(gx.g * gx.g + gy.g * gy.g);
     sobelImage.g.b = sqrt(gx.b * gx.b + gy.b * gy.b);
+    sobelImage.g.a = sqrt(gx.a * gx.a + gy.a * gy.a);
+
+    sobelImage.theta.r = atan2(gy.r, gx.r);
+    sobelImage.theta.g = atan2(gy.g, gx.g);
+    sobelImage.theta.b = atan2(gy.b, gx.b);
 
     return sobelImage;
 }
@@ -71,20 +80,26 @@ void EdgeDetectionDepth(uint3 id : SV_DispatchThreadID)
 {
 	float4 depthNormal = _CameraDepthNormalsTexture.Load(int3(id.xy, 0));
 	_EdgesBufferRW[id.xy] = float4(depthNormal.zw, 0.0, 1.0);
+
+    SobelFilterImage sobelImage = ComputeSobelFilter(_CameraDepthNormalsTexture, id);
+
+    const float threshold_min = 0.075;
+
+    sobelImage.g.z = sobelImage.g.z < threshold_min ? 0.0 : sobelImage.g.z;
+    sobelImage.g.w = sobelImage.g.w < threshold_min ? 0.0 : sobelImage.g.w;
+
+	_EdgesBufferRW[id.xy] = float4(sobelImage.g.zw, 0.0, 1.0);
 }
 
 [numthreads(8, 8, 1)]
 void EdgeDetectionColor(uint3 id : SV_DispatchThreadID)
 {
-	float4 colorBuffer = _CameraColorBuffer.Load(int3(id.xy, 0));
     //float width = 0.0;
     //float height = 0.0;
     //_EdgesBufferRW.GetDimensions(width, height);
 	//_EdgesBufferRW[id.xy] = float4(id.x / width, id.y / height, 0.0, 1.0);
 
-	//_EdgesBufferRW[id.xy] = float4(colorBuffer.xyz * float3(1.0, 0.8, 0.5), 1.0);
-
-    SobelFilterImage sobelImage = ComputeSobelFilter(id);
+    SobelFilterImage sobelImage = ComputeSobelFilter(_CameraColorBuffer, id);
 
     const float threshold_min = 0.075;
 
@@ -100,6 +115,15 @@ void EdgeDetectionNormal(uint3 id : SV_DispatchThreadID)
 {
 	float4 depthNormal = _CameraDepthNormalsTexture.Load(int3(id.xy, 0));
 	_EdgesBufferRW[id.xy] = float4(depthNormal.xy, 0.0, 1.0);
+
+    SobelFilterImage sobelImage = ComputeSobelFilter(_CameraDepthNormalsTexture, id);
+
+    const float threshold_min = 0.25;
+
+    sobelImage.g.r = sobelImage.g.r < threshold_min ? 0.0 : sobelImage.g.r;
+    sobelImage.g.g = sobelImage.g.g < threshold_min ? 0.0 : sobelImage.g.g;
+
+	_EdgesBufferRW[id.xy] = float4(sobelImage.g.xy, 0.0, 1.0);
 }
 
 [numthreads(8, 8, 1)]
@@ -108,4 +132,40 @@ void EdgeDetectionCustom(uint3 id : SV_DispatchThreadID)
 	float4 colorBuffer = _CameraColorBuffer.Load(int3(id.xy, 0));
 	float4 depthNormal = _CameraDepthNormalsTexture.Load(int3(id.xy, 0));
 	_EdgesBufferRW[id.xy] = float4(colorBuffer.xyz * 0.5 + depthNormal.xyy * 0.5f, 1.0);
+}
+
+static float blurMatrix[25] = {
+    2,  4,  5,  4, 2,
+    4,  9, 12,  9, 4,
+    5, 12, 15, 12, 5,
+    4,  9, 12,  9, 4,
+    2,  4,  5,  4, 2,
+};
+
+float3 ComputeGaussianBlur(Texture2D<float4> buffer, uint2 id) {
+    float3 blur = float3(0.0, 0.0, 0.0);
+
+    int2 idx = int2(-2, 2);
+    for (int i = 0; i < 25; ++i) {
+        float3 color = buffer.Load(int3(id.xy + idx, 0)).rgb;
+        blur.r += blurMatrix[i] * color.r;
+        blur.g += blurMatrix[i] * color.g;
+        blur.b += blurMatrix[i] * color.b;
+
+        idx.x += 1;
+        if (idx.x == 3) {
+            idx.x = -2;
+            idx.y -= 1;
+        }
+    }
+
+    blur /= 159.0;
+    return blur;
+}
+
+[numthreads(8, 8, 1)]
+void GaussianBlur(uint3 id : SV_DispatchThreadID)
+{
+    float3 blur = ComputeGaussianBlur(_CameraColorBuffer, id.xy);
+	_BlurBufferRW[id.xy] = float4(blur, 1.0);
 }
