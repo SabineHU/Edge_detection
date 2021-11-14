@@ -1,0 +1,179 @@
+#pragma kernel EdgeDetectionDepth
+#pragma kernel EdgeDetectionColor
+#pragma kernel EdgeDetectionNormal
+#pragma kernel EdgeDetectionCustom
+
+// Required for decompression
+#include "UnityCG.cginc"
+
+// Input buffers
+Texture2D<float4> _CameraColorBuffer;
+Texture2D<float4> _CameraDepthNormalsTexture;
+
+// Output buffer
+RWTexture2D<float4> _EdgesBufferRW;
+
+#define M_PI 3.14159
+
+static float2 sobelPointsPositions[9] = {
+    float2(-1,  1), float2(0,  1), float2(1,  1),
+    float2(-1,  0), float2(0,  0), float2(1,  0),
+    float2(-1, -1), float2(0, -1), float2(1, -1),
+};
+
+static float sobelXMatrix[9] = {
+    1, 0, -1,
+    2, 0, -2,
+    1, 0, -1,
+};
+
+static float sobelYMatrix[9] = {
+     1,  2,  1,
+     0,  0,  0,
+    -1, -2, -1,
+};
+
+struct SobelFilterChannel {
+    float gx,gy;
+    float g;
+    float theta;
+
+};
+
+struct DirectionImage {
+    float2 red, green, blue;
+};
+
+struct SobelFilterImage {
+    SobelFilterChannel red, green, blue;
+
+    float3 gx;
+    float3 gy;
+    float3 g;
+    float3 theta;
+};
+
+
+float ComputeThetaAngle(float gx, float gy) {
+    const float theta = atan2(gy, gx);
+
+    if ((theta > 0 && theta < 22.5) || (theta > 157.5 && theta < 180))
+        return 0;
+
+    if (theta > 22.5 && theta < 67.5)
+        return 45;
+
+    if (theta > 67.5 && theta < 112.5)
+        return 90;
+
+    return 135;
+}
+
+SobelFilterImage ComputeSobelFilter(uint2 id, DirectionImage direction) {
+    SobelFilterImage sobelImage;
+    sobelImage.red.gx = 0.0;
+    sobelImage.red.gy = 0.0;
+    sobelImage.green.gx = 0.0;
+    sobelImage.green.gy = 0.0;
+    sobelImage.blue.gx = 0.0;
+    sobelImage.blue.gy = 0.0;
+
+    for (int i = 0; i < 9; ++i) {
+        float3 color = _CameraColorBuffer.Load(int3(id.xy + sobelPointsPositions[i] + direction.red, 0)).r;
+        sobelImage.red.gx += sobelXMatrix[i] * color;
+        sobelImage.red.gy += sobelYMatrix[i] * color;
+
+        color = _CameraColorBuffer.Load(int3(id.xy + sobelPointsPositions[i] + direction.green, 0)).g;
+        sobelImage.green.gx += sobelXMatrix[i] * color;
+        sobelImage.green.gy += sobelYMatrix[i] * color;
+
+        color = _CameraColorBuffer.Load(int3(id.xy + sobelPointsPositions[i] + direction.blue, 0)).b;
+        sobelImage.blue.gx += sobelXMatrix[i] * color;
+        sobelImage.blue.gy += sobelYMatrix[i] * color;
+    }
+
+    sobelImage.red.g = sqrt(sobelImage.red.gx * sobelImage.red.gx + sobelImage.red.gy * sobelImage.red.gy);
+    sobelImage.green.g = sqrt(sobelImage.green.gx * sobelImage.green.gx + sobelImage.green.gy * sobelImage.green.gy);
+    sobelImage.blue.g = sqrt(sobelImage.blue.gx * sobelImage.blue.gx + sobelImage.blue.gy * sobelImage.blue.gy);
+
+    sobelImage.red.theta = atan2(sobelImage.red.gy, sobelImage.red.gx);
+    sobelImage.green.theta = atan2(sobelImage.green.gy, sobelImage.green.gx);
+    sobelImage.blue.theta = atan2(sobelImage.blue.gy, sobelImage.blue.gx);
+
+    return sobelImage;
+}
+
+[numthreads(8, 8, 1)]
+void EdgeDetectionDepth(uint3 id : SV_DispatchThreadID)
+{
+	float4 depthNormal = _CameraDepthNormalsTexture.Load(int3(id.xy, 0));
+	_EdgesBufferRW[id.xy] = float4(depthNormal.zw, 0.0, 1.0);
+}
+
+[numthreads(8, 8, 1)]
+void EdgeDetectionColor(uint3 id : SV_DispatchThreadID)
+{
+	float4 colorBuffer = _CameraColorBuffer.Load(int3(id.xy, 0));
+    //float width = 0.0;
+    //float height = 0.0;
+    //_EdgesBufferRW.GetDimensions(width, height);
+	//_EdgesBufferRW[id.xy] = float4(id.x / width, id.y / height, 0.0, 1.0);
+
+	_EdgesBufferRW[id.xy] = float4(colorBuffer.xyz * float3(1.0, 0.8, 0.5), 1.0);
+
+    DirectionImage directionImage;
+    directionImage.red = 0;
+    directionImage.green = 0;
+    directionImage.blue = 0;
+
+    SobelFilterImage sobelImage = ComputeSobelFilter(id, directionImage);
+
+    directionImage.red = float2(cos(sobelImage.red.theta), sin(sobelImage.red.theta));
+    directionImage.green = float2(cos(sobelImage.green.theta), sin(sobelImage.green.theta));
+    directionImage.blue = float2(cos(sobelImage.blue.theta), sin(sobelImage.blue.theta));
+    SobelFilterImage sobelImagePosDir = ComputeSobelFilter(id, directionImage);
+
+    directionImage.red *= -1;
+    directionImage.green *= -1;
+    directionImage.blue *= -1;
+    SobelFilterImage sobelImageNegDir = ComputeSobelFilter(id, directionImage);
+
+    float threshold_min = 0.1;
+
+    if (sobelImage.red.g < sobelImageNegDir.red.g || sobelImage.red.g < sobelImagePosDir.red.g || sobelImage.red.g < threshold_min)
+        sobelImage.red.g = 0.0;
+    if (sobelImage.green.g < sobelImageNegDir.green.g || sobelImage.green.g < sobelImagePosDir.green.g || sobelImage.green.g < threshold_min)
+        sobelImage.green.g = 0.0;
+    if (sobelImage.blue.g < sobelImageNegDir.blue.g || sobelImage.blue.g < sobelImagePosDir.blue.g || sobelImage.blue.g < threshold_min)
+        sobelImage.blue.g = 0.0;
+
+    float threshold_max = 0.9;
+    if (sobelImage.red.g > threshold_max)
+        sobelImage.red.g = 1.0;
+    if (sobelImage.green.g > threshold_max)
+        sobelImage.green.g = 1.0;
+    if (sobelImage.blue.g > threshold_max)
+        sobelImage.blue.g = 1.0;
+
+    float3 outColor = float3(sin(sobelImage.red.theta), sin(sobelImage.green.theta + 2.0f*M_PI/3.0f),sin(sobelImage.blue.theta + 2.f*M_PI/3.0f * 2.0f));
+
+    outColor *= float3(sobelImage.red.g, sobelImage.green.g, sobelImage.blue.g);
+
+	_EdgesBufferRW[id.xy] = float4(sobelImage.red.g, sobelImage.green.g, sobelImage.blue.g, 1.0);
+	_EdgesBufferRW[id.xy] = float4(outColor, 1.0);
+}
+
+[numthreads(8, 8, 1)]
+void EdgeDetectionNormal(uint3 id : SV_DispatchThreadID)
+{
+	float4 depthNormal = _CameraDepthNormalsTexture.Load(int3(id.xy, 0));
+	_EdgesBufferRW[id.xy] = float4(depthNormal.xy, 0.0, 1.0);
+}
+
+[numthreads(8, 8, 1)]
+void EdgeDetectionCustom(uint3 id : SV_DispatchThreadID)
+{
+	float4 colorBuffer = _CameraColorBuffer.Load(int3(id.xy, 0));
+	float4 depthNormal = _CameraDepthNormalsTexture.Load(int3(id.xy, 0));
+	_EdgesBufferRW[id.xy] = float4(colorBuffer.xyz * 0.5 + depthNormal.xyy * 0.5f, 1.0);
+}
