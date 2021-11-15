@@ -63,6 +63,11 @@ float4 ComputeSobelFilter(Texture2D<float4> buffer, uint2 id, float threshold_mi
     return g;
 }
 
+float4 ComputeToneMapping(const float gamma, float4 color) {
+    float4 mapped = color / (color + 1.0);
+    return pow(mapped, 1.0 / gamma);
+}
+
 [numthreads(8, 8, 1)]
 void EdgeDetectionDepth(uint3 id : SV_DispatchThreadID)
 {
@@ -80,9 +85,10 @@ void EdgeDetectionColor(uint3 id : SV_DispatchThreadID)
     //_EdgesBufferRW.GetDimensions(width, height);
     //_EdgesBufferRW[id.xy] = float4(id.x / width, id.y / height, 0.0, 1.0);
 
-    const float threshold_min = 0.075;
-    const float4 g = ComputeSobelFilter(_BlurColorBuffer, id, threshold_min);
+    const float threshold_min = 0.085;
+    float4 g = ComputeSobelFilter(_BlurColorBuffer, id, threshold_min);
 
+    g = ComputeToneMapping(2.2, g);
     _EdgesBufferRW[id.xy] = float4(g.rgb, 1.0);
 }
 
@@ -90,7 +96,7 @@ void EdgeDetectionColor(uint3 id : SV_DispatchThreadID)
 void EdgeDetectionNormal(uint3 id : SV_DispatchThreadID)
 {
     const float threshold_min = 0.25;
-    const float4 g = ComputeSobelFilter(_CameraDepthNormalsTexture, id, threshold_min);
+    float4 g = ComputeSobelFilter(_CameraDepthNormalsTexture, id, threshold_min);
 
     _EdgesBufferRW[id.xy] = float4(g.xy, 0.0, 1.0);
 }
@@ -111,20 +117,21 @@ void EdgeDetectionCustom(uint3 id : SV_DispatchThreadID)
         blur += ComputeSobelFilter(_BlurColorBuffer, id - float2(0.0, j), 0.25) * weight[i];
     }
 
-    float4 depth = ComputeSobelFilter(_CameraDepthNormalsTexture, id, 0.075);
-    float4 color = ComputeSobelFilter(_CameraColorBuffer, id, 0.075);
+    float4 normal = ComputeSobelFilter(_CameraDepthNormalsTexture, id, 0.075);
+    float4 color = ComputeSobelFilter(_CameraColorBuffer, id, 0.085);
+    float4 depth = ceil(normal.wwww - 0.12);
 
     float threshold = 0.2;
-    if (depth.x < threshold)
-        depth.x = 0.0;
-    if (depth.y < threshold)
-        depth.y = 0.0;
+    if (normal.x < threshold)
+        normal.x = 0.0;
+    if (normal.y < threshold)
+        normal.y = 0.0;
 
-    float3 res = (blur.rgb + ceil(blur.rgb + color.rgb)) * colorBuffer.rgb;
-    //res = min(depth.ggg + depth.rrr, 1.0) * res;
+    float4 res = (blur + ceil(blur + color)) * colorBuffer;
+    float4 mapped = ComputeToneMapping(2.2, res) * 1.2;;
+    res = min(normal.gggg + normal.rrrr, 1.0) * res;
 
-	_EdgesBufferRW[id.xy] = float4(colorBuffer.xyz * 0.5 + depthNormal.xyy * 0.5f, 1.0);
-    _EdgesBufferRW[id.xy] = float4(res, 1.0);
+    _EdgesBufferRW[id.xy] = float4((mapped + res).rgb, 1.0);
 }
 
 static float blurMatrix[25] = {
