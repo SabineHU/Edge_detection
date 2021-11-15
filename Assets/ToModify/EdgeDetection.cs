@@ -55,7 +55,8 @@ public class EdgeDetection : MonoBehaviour
             edgeDetection.SetTexture(blurID, "_BlurBufferRW", blurBuffer);
             edgeDetection.Dispatch(blurID, tileX, tileY, 1);
 
-            edgeDetection.SetTexture(kernelID, "_CameraColorBuffer", blurBuffer);
+            edgeDetection.SetTexture(kernelID, "_CameraColorBuffer", src);
+            edgeDetection.SetTexture(kernelID, "_BlurColorBuffer", blurBuffer);
             edgeDetection.SetTexture(kernelID, "_EdgesBufferRW", edgeBuffer);
             edgeDetection.Dispatch(kernelID, tileX, tileY, 1);
 
