@@ -38,23 +38,26 @@ static float sobelYMatrix[9] = {
 };
 
 float4 ComputeSobelFilter(Texture2D<float4> buffer, uint2 id, float threshold_min) {
-    float4 g = float4(0.0, 0.0, 0.0, 0.0);
-
     float4 gx = float4(0.0, 0.0, 0.0, 0.0);
     float4 gy = float4(0.0, 0.0, 0.0, 0.0);
 
+    // Compute convolution
     for (int i = 0; i < 9; ++i) {
         const float4 color = buffer.Load(int3(id.xy + sobelPointsPositions[i], 0));
 
+        // horizontal
         float value = sobelXMatrix[i];
         gx += float4(value, value, value, value) * color;
 
+        // vertical
         value = sobelYMatrix[i];
         gy += float4(value, value, value, value) * color;
     }
 
-    g = sqrt(gx * gx + gy * gy);
+    // Compute gradient magnitude
+    float4 g = sqrt(gx * gx + gy * gy);
 
+    // Apply threshold
     g.r = g.r < threshold_min ? 0.0 : g.r;
     g.g = g.g < threshold_min ? 0.0 : g.g;
     g.b = g.b < threshold_min ? 0.0 : g.b;
@@ -80,11 +83,6 @@ void EdgeDetectionDepth(uint3 id : SV_DispatchThreadID)
 [numthreads(8, 8, 1)]
 void EdgeDetectionColor(uint3 id : SV_DispatchThreadID)
 {
-    //float width = 0.0;
-    //float height = 0.0;
-    //_EdgesBufferRW.GetDimensions(width, height);
-    //_EdgesBufferRW[id.xy] = float4(id.x / width, id.y / height, 0.0, 1.0);
-
     const float threshold_min = 0.085;
     float4 g = ComputeSobelFilter(_BlurColorBuffer, id, threshold_min);
 
@@ -104,12 +102,10 @@ void EdgeDetectionNormal(uint3 id : SV_DispatchThreadID)
 [numthreads(8, 8, 1)]
 void EdgeDetectionCustom(uint3 id : SV_DispatchThreadID)
 {
-	float4 colorBuffer = _CameraColorBuffer.Load(int3(id.xy, 0));
-	float4 depthNormal = _CameraDepthNormalsTexture.Load(int3(id.xy, 0));
-
     float4 blur = float4(0.0, 0.0, 0.0, 0.0);
     const float weight[7] = { 0.09, 0.11, 0.18, 0.24, 0.18, 0.11, 0.09 };
 
+    // Bloom
     for (int i = 0, j = -3; i < 5; ++i, ++j) {
         blur += ComputeSobelFilter(_BlurColorBuffer, id + float2(j, 0.0), 0.25) * weight[i];
         blur += ComputeSobelFilter(_BlurColorBuffer, id - float2(j, 0.0), 0.25) * weight[i];
@@ -117,16 +113,20 @@ void EdgeDetectionCustom(uint3 id : SV_DispatchThreadID)
         blur += ComputeSobelFilter(_BlurColorBuffer, id - float2(0.0, j), 0.25) * weight[i];
     }
 
+    // Compute SobelFilter
     float4 normal = ComputeSobelFilter(_CameraDepthNormalsTexture, id, 0.075);
     float4 color = ComputeSobelFilter(_CameraColorBuffer, id, 0.085);
     float4 depth = ceil(normal.wwww - 0.12);
 
+    // Apply threshold
     float threshold = 0.2;
     if (normal.x < threshold)
         normal.x = 0.0;
     if (normal.y < threshold)
         normal.y = 0.0;
 
+    // Get final color
+    float4 colorBuffer = _CameraColorBuffer.Load(int3(id.xy, 0));
     float4 res = (blur + ceil(blur + color)) * colorBuffer;
     float4 mapped = ComputeToneMapping(2.2, res) * 1.2;;
     res = min(normal.gggg + normal.rrrr, 1.0) * res;
@@ -145,6 +145,7 @@ static float blurMatrix[25] = {
 float3 ComputeGaussianBlur(Texture2D<float4> buffer, uint2 id) {
     float3 blur = float3(0.0, 0.0, 0.0);
 
+    // Compute blur convolution
     int2 idx = int2(-2, 2);
     for (int i = 0; i < 25; ++i) {
         const float3 color = buffer.Load(int3(id.xy + idx, 0)).rgb;
@@ -152,6 +153,7 @@ float3 ComputeGaussianBlur(Texture2D<float4> buffer, uint2 id) {
         const float value = blurMatrix[i];
         blur += float3(value, value, value) * color;
 
+        // Check if end of matrix line
         idx.x += 1;
         if (idx.x == 3) {
             idx.x = -2;
