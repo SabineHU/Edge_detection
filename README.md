@@ -6,33 +6,33 @@ Adding a last one based on color and depth with bloom effect.
 # Edge detection on forest scene
 
 Default image
-![plot](results/forest/default.png)
+![plot](images/forest/default.png)
 
 1. Color
-![plot](results/forest/color.png)
+![plot](images/forest/color.png)
 
 2. Depth
-![plot](results/forest/depth.png)
+![plot](images/forest/depth.png)
 
 3. Normal
-![plot](results/forest/normal.png)
+![plot](images/forest/normal.png)
 
 4. Color + depth + bloom
-![plot](results/forest/bloom.png)
+![plot](images/forest/bloom.png)
 
 # Edge detection on unity scene
 
 Default image
-![plot](results/unity/default.png)
+![plot](images/unity/default.png)
 
 1. Color
-![plot](results/unity/color.png)
+![plot](images/unity/color.png)
 
 2. Depth
-![plot](results/unity/depth.png)
+![plot](images/unity/depth.png)
 
 3. Normal
-![plot](results/unity/normal.png)
+![plot](images/unity/normal.png)
 
 4. Color + depth + bloom
-![plot](results/unity/bloom.png)
+![plot](images/unity/bloom.png)
